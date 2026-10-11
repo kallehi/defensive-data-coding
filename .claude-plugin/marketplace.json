@@ -1,0 +1,12 @@
+{
+  "name": "defensive-data-coding",
+  "owner": { "name": "Kalle Hirvonen" },
+  "description": "Defensive-coding checks for data pipelines, geared towards survey data.",
+  "plugins": [
+    {
+      "name": "defensive-data-coding",
+      "source": "./",
+      "description": "Skill that makes Claude write and review data-pipeline code with checks that fail on plausible bugs, using the CAPI form as an oracle for survey data."
+    }
+  ]
+}
