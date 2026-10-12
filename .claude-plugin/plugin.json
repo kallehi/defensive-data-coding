@@ -1,7 +1,7 @@
 {
   "name": "defensive-data-coding",
   "displayName": "Defensive Data Coding",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Defensive-coding checks for data pipelines in Stata, R or Python, geared towards survey data: merges, constructed variables, sample restrictions, wildcard variable lists, sentinel codes, and the CAPI form as an oracle.",
   "author": { "name": "Kalle Hirvonen" },
   "license": "MIT",

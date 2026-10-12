@@ -1,6 +1,6 @@
 ---
 name: defensive-data-coding
-description: Defensive-coding checks for data pipelines (cleaning, merging, variable construction) in Stata, R or Python. Geared towards survey data collected with CAPI tools (SurveyCTO, ODK, Survey Solutions, CSPro) but equally useful for administrative and other tabular data; for surveys it first asks for the deployed CAPI form and uses its codes, labels and relevance conditions as an oracle. Use whenever writing or reviewing code that loads data, merges files, constructs variables or indicators, or defines an estimation sample — ALWAYS when the code is AI-generated — and when retrofitting checks onto an existing pipeline. Trigger on any merge, new constructed variable, sample restriction, or request to check, verify, validate or add asserts. Covers uniqueness, merge patterns and silent name collisions, ranges, missingness and sentinel codes, wildcard variable lists, degenerate distributions, row counts, outliers, oracles, side-effect-free retrofitting, and provenance of results and constants.
+description: Defensive-coding checks for data pipelines (cleaning, merging, variable construction) in Stata, R or Python. Geared towards survey data collected with CAPI tools (SurveyCTO, ODK, Survey Solutions, CSPro) but equally useful for administrative and other tabular data; for surveys it first asks for the deployed CAPI form and uses its codes, labels and relevance conditions as an oracle. Use whenever writing or reviewing code that loads data, merges files, constructs variables or indicators, or defines an estimation sample — ALWAYS when the code is AI-generated — and when retrofitting checks onto an existing pipeline. Trigger on any merge, new constructed variable, sample restriction, or request to check, verify, validate or add asserts. Covers uniqueness, merge patterns and silent name collisions, ranges, missingness and sentinel codes, wildcard variable lists, degenerate distributions, transformations that silently drop observations (logs, ratios, string-to-number conversion), row counts, outliers, oracles, side-effect-free retrofitting, and provenance of results and constants.
 ---
 
 # Defensive Data Coding
@@ -62,6 +62,16 @@ Pinning a list to what the pattern matches *today* documents it but does not val
 A constructed variable that is constant, all missing, or nearly so (100% of households "save", everyone scores 1 on an item) passes every range assert and is almost always a construction bug. Warn on it. A warning costs nothing when the result is genuine and catches a whole class of errors that range checks miss.
 
 A constant *validation* variable is a finding in itself. If a discrepancy flag or a difference between two measures is zero for every row, the two "independent" measures are almost certainly the same source (e.g. a total the CAPI form computed from a roster), and the cross-check is vacuous.
+
+### 9. Transformations that silently change the sample
+
+Concept 5 catches the drops you make on purpose. These are the drops nobody decided on: routine transformations whose failure mode is a lost observation, not an error.
+
+- **Logs.** `log(x)` is undefined for `x <= 0`. Stata returns missing without a message, so the observation leaves every regression that uses it. R and numpy return `-Inf` for zero and `NaN` for negatives instead: R's `lm()` then stops, while pandas' `dropna()` keeps the `-inf` rows. Before logging, count zeros and negatives. Assert that the log is missing (or non-finite) exactly where the input is missing or non-positive, and log the number lost.
+- **Ratios.** A zero denominator (yield per hectare with 0 ha, a share of 0 trees) gives missing in Stata and `Inf`/`NaN` in R and pandas. Count zero denominators and assert the same way.
+- **String-to-number conversion.** Stata `destring, force` and `real()`, R `as.numeric()` and pandas `to_numeric(errors="coerce")` turn any entry that is not a clean number ("1,500", "about 200", "DK") into missing. At most a one-line note or a generic warning is printed; none of them lists the values. Count entries that are non-missing before conversion and missing after, list them, and assert the count (zero, or a pinned known number).
+
+The assert is a **halt**: it fires when the construction deviates from the documented rule, for example when someone recodes `log(0)` to 0. Two further points need a human eye (**warn**). First, if the share of zeros or zero denominators differs across the groups being compared (e.g. treatment arms), a log or ratio specification conditions on a sample the outcome itself selected; print the share by group. Second, `log(x + c)` and the inverse hyperbolic sine keep zeros but depend on the units of `x`. Whether to drop, offset, transform differently or stay in levels is the researcher's decision; the check only makes sure it is a decision.
 
 ## Anchor to oracles
 
@@ -131,6 +141,9 @@ Write the check by concept above; look up the verb here. Stata is first-class; R
 | No sentinel codes remain | `assert !inlist(x, 88, 99, -88)` | `stopifnot(!any(x %in% c(88, 99, -88)))` | `assert not df["x"].isin([88, 99, -88]).any()` |
 | Pattern list = expected set | see block below | `stopifnot(setequal(grep("^q5_", names(df)[sapply(df, is.numeric)], value = TRUE), opts))` | `assert set(df.filter(regex=r"^q5_").select_dtypes("number").columns) == set(opts)` |
 | Degenerate distribution (warn) | see block below | `if (length(unique(na.omit(x))) <= 1) warning("x degenerate")` | `if df["x"].nunique() <= 1: warnings.warn("x degenerate")` |
+| Log loses only non-positive values | see block below | `lx <- log(ifelse(x > 0, x, NA))`; `stopifnot(identical(is.na(lx), is.na(x) \| x <= 0))` | `lx = np.log(df["x"].where(df["x"] > 0))`; `assert (lx.isna() == (df["x"].isna() \| (df["x"] <= 0))).all()` |
+| Ratio loses only zero denominators | see block below | `r <- ifelse(d != 0, n / d, NA)`; `stopifnot(all(is.finite(r) \| is.na(r)))` | `r = df["n"] / df["d"].where(df["d"] != 0)`; `assert np.isfinite(r.dropna()).all()` |
+| String-to-number: list what failed | see block below | `v <- suppressWarnings(as.numeric(s))`; `bad <- s[!is.na(s) & s != "" & is.na(v)]`; `stopifnot(length(bad) == 0)` | `v = pd.to_numeric(df["s"], errors="coerce")`; `bad = df.loc[df["s"].notna() & v.isna(), "s"]`; `assert bad.empty, bad.tolist()` |
 
 Stata blocks for the rows above (tested in StataNow 19: each fires on broken data and passes on clean data):
 
@@ -185,6 +198,28 @@ if "`extra'`absent'" != "" {
 * Degenerate distribution (warn)
 qui sum x
 if r(N) == 0 | r(min) == r(max) di as error "WARN: x is constant or all missing"
+
+* Log: lose only non-positive values (halt), report the loss, zero share by group (warn)
+qui count if x <= 0 & !missing(x)
+local nonpos = r(N)
+gen ln_x = ln(x)
+assert missing(ln_x) == (missing(x) | x <= 0)
+di as text "ln_x: `nonpos' non-positive value(s) set to missing"
+gen byte _nonpos = (x <= 0) if !missing(x)
+tabstat _nonpos, by(arm) stat(mean n)          // compare the share across arms
+drop _nonpos
+
+* Ratio: lose only zero denominators
+qui count if den == 0 & !missing(num)
+di as text "r: `r(N)' zero denominator(s) set to missing"
+gen r = num / den
+assert missing(r) == (missing(num, den) | den == 0)
+
+* String-to-number: list and count what failed to convert
+gen double s_num = real(s)                     // or destring; never trust force
+list s if !missing(s) & missing(s_num)
+qui count if !missing(s) & missing(s_num)
+assert r(N) == 0                               // or the pinned, documented count
 ```
 
 Use `if … error 9` rather than `assert` for macro-level checks: `assert` evaluates once per observation and passes vacuously when there are 0 observations.

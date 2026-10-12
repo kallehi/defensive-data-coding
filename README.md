@@ -55,8 +55,10 @@ encodes checks designed to catch these failures where they happen.
   (Stata silently keeps the master's copy); logical ranges; missingness
   logic, including Stata's missing-is-larger-than-any-number trap and
   unrecoded sentinel codes; row counts across sample restrictions;
-  outliers; the exact contents of wildcard variable lists; and constant
-  or all-missing variables.
+  outliers; the exact contents of wildcard variable lists; constant
+  or all-missing variables; and transformations that silently drop
+  observations (logs of zeros, ratios with zero denominators, text that
+  fails to convert to numbers).
 - **Anchors checks to oracles**: design constants (sample size, clusters,
   arm sizes) and the instrument's code sets.
 - **Tags every check** as halt, warn or log.
@@ -75,9 +77,11 @@ restrictions and outlier treatment remain the researcher's decisions.
 ## Testing status
 
 The Stata code blocks in `SKILL.md` were tested in StataNow 19: each
-check passes on clean data and fires on deliberately broken data. The R
-and Python equivalents have not been executed; test them before relying
-on them.
+check passes on clean data and fires on deliberately broken data. For
+the transformation checks (logs, ratios, string-to-number) the R and
+Python versions were tested the same way, in R 4.6.0 and numpy 2.4 /
+pandas 3.0. The other R and Python equivalents have not been executed;
+test them before relying on them.
 
 ## Licence
 
